@@ -6,6 +6,7 @@ import dolfin as df
 import sys
 
 import ldrb
+import cardiac_geometries
 
 
 def rectangle_mesh(L, H, nx, ny, path="./meshes/"):
@@ -365,26 +366,37 @@ def bi_ventricular_fibers_from_mesh(path_to_folder: Path | str):
         print(f"wrote {name} in path {str(hdf5_file)}")
 
 
-def bi_ventricular_mesh_with_fibers(N, path="./meshes/"):
+def bi_ventricular_mesh_with_fibers(char_length: float, path="./meshes/"):
     """Create bi-ventricular domain using the ldrb package
     including fibers (fiber, sheet, sheet-normal) directions.
 
-
-    REMARK: For the mesh and fibers its required to use
-    ldrb, which was tested in the
-    commit 2a49b3591eac6d0deaa30c2ef9d7b2d5bf2e1d69
-    Date:   Tue May 11 17:35:45 2021 +0200
-        Add pytest-cov to dev dependencies
-
     Args:
-        N (float):  discretization mesh size
+        char_length (float):  characteristic length size
         path (str):     write path
     """
-    raise NotImplementedError()
     import ldrb
 
-    geometry = ldrb.create_biv_mesh(
-        N=N,
+    geometry = cardiac_geometries.create_biv_ellipsoid(
+        char_length=char_length,
+        a_endo_lv=0.069,  # 6.9cm
+        b_endo_lv=0.025,  # 2.5cm
+        c_endo_lv=0.025,  # 2.5cm
+        a_epi_lv=0.08,  # 8.0cm
+        b_epi_lv=0.039,  # 3.9cm
+        c_epi_lv=0.039,  # 3.9cm
+        center_lv_y=0.0,  # remaining coordinates are 0.0
+        a_endo_rv=0.070,  # 6.7cm
+        b_endo_rv=0.033,  # 3.0cm
+        c_endo_rv=0.054,  # 5.1cm
+        a_epi_rv=0.075,  # 7.5cm
+        b_epi_rv=0.038,  # 3.8cm
+        c_epi_rv=0.059,  # 5.9cm
+        center_rv_y=0.0,  # coordinate x is 0.0
+        center_rv_z=0.019,
+    )
+
+    mesh_prev, facet_func_prev = tag_domain_with_markers_prev_fibers(
+        mesh=geometry.mesh,
         a_endo_lv=0.069,  # 6.9cm
         b_endo_lv=0.025,  # 2.5cm
         c_endo_lv=0.025,  # 2.5cm
@@ -402,83 +414,78 @@ def bi_ventricular_mesh_with_fibers(N, path="./meshes/"):
         base_x=0.0,
     )
 
-    mesh = geometry.mesh
-    facet_func = geometry.ffun
-    markers = geometry.markers
+    # xdmf_path = Path(path)
+    # xdmf_path.mkdir(exist_ok=True, parents=True)
 
-    fiber_space = "Lagrange_2"
+    # biv_path = xdmf_path.joinpath("bi_ventricular.xdmf")
+    # with df.XDMFFile(mesh_prev.mpi_comm(), str(biv_path)) as xdmf:
+    #     xdmf.write(mesh_prev)
+    #     xdmf.write(facet_func_prev)
+
     # Compute the microstructure
     print("Creating fiber, sheet and sheet_normal")
-    fiber, sheet, sheet_normal = ldrb.dolfin_ldrb(
-        mesh=mesh,
-        fiber_space=fiber_space,
-        ffun=facet_func,
-        markers=markers,
+    system = ldrb.dolfin_ldrb(
+        mesh=mesh_prev,
+        fiber_space="P_2",
+        ffun=facet_func_prev,
+        markers=dict(base=10, rv=20, lv=30, epi=40),
         alpha_endo_lv=60,  # Fiber angle on the LV endocardium
         alpha_epi_lv=-60,  # Fiber angle on the LV epicardium
         beta_endo_lv=0,  # Sheet angle on the LV endocardium
         beta_epi_lv=0,  # Sheet angle on the LV epicardium
-        # alpha_endo_sept=-60,  # Fiber angle on the Septum endocardium
-        # alpha_epi_sept=60,  # Fiber angle on the Septum epicardium
-        beta_endo_sept=0,  # Sheet angle on the Septum endocardium
-        beta_epi_sept=0,  # Sheet angle on the Septum epicardium
-        alpha_endo_rv=-120,  # Fiber angle on the RV endocardium
-        alpha_epi_rv=60,  # Fiber angle on the RV epicardium
-        beta_endo_rv=0,  # Sheet angle on the RV endocardium
-        beta_epi_rv=0,
+        alpha_endo_rv=60,  # Fiber angle on the RV endocardium
+        alpha_epi_rv=-60,  # Fiber angle on the RV epicardium
+    )
+
+    mesh_post, facet_func_post = tag_domain_with_markers_post_fibers(
+        mesh=mesh_prev,
+        a_endo_lv=0.069,  # 6.9cm
+        b_endo_lv=0.025,  # 2.5cm
+        c_endo_lv=0.025,  # 2.5cm
+        a_epi_lv=0.08,  # 8.0cm
+        b_epi_lv=0.039,  # 3.9cm
+        c_epi_lv=0.039,  # 3.9cm
+        center_lv=(0.0, 0.0, 0.0),
+        a_endo_rv=0.070,  # 6.7cm
+        b_endo_rv=0.033,  # 3.0cm
+        c_endo_rv=0.054,  # 5.1cm
+        a_epi_rv=0.075,  # 7.5cm
+        b_epi_rv=0.038,  # 3.8cm
+        c_epi_rv=0.059,  # 5.9cm
+        center_rv=(0.0, 0.0, 0.019),
+        base_x=0.0,
     )
 
     xdmf_path = Path(path)
     xdmf_path.mkdir(exist_ok=True, parents=True)
 
-    new_mesh, tagged_facet_func = tag_domain_with_markers(
-        mesh=mesh,
-        a_endo_lv=0.069,  # 6.9cm
-        b_endo_lv=0.025,  # 2.5cm
-        c_endo_lv=0.025,  # 2.5cm
-        a_epi_lv=0.08,  # 8.0cm
-        b_epi_lv=0.039,  # 3.9cm
-        c_epi_lv=0.039,  # 3.9cm
-        center_lv=(0.0, 0.0, 0.0),
-        a_endo_rv=0.070,  # 6.7cm
-        b_endo_rv=0.033,  # 3.0cm
-        c_endo_rv=0.054,  # 5.1cm
-        a_epi_rv=0.075,  # 7.5cm
-        b_epi_rv=0.038,  # 3.8cm
-        c_epi_rv=0.059,  # 5.9cm
-        center_rv=(0.0, 0.0, 0.019),
-        base_x=0.0,
-    )
+    biv_path = xdmf_path.joinpath("bi_ventricular.xdmf")
 
     biv_path = xdmf_path.joinpath("bi_ventricular.xdmf")
-    with df.XDMFFile(new_mesh.mpi_comm(), str(biv_path)) as xdmf:
-        xdmf.write(new_mesh)
-        xdmf.write(tagged_facet_func)
+    with df.XDMFFile(mesh_post.mpi_comm(), str(biv_path)) as xdmf:
+        xdmf.write(mesh_post)
+        xdmf.write(facet_func_post)
 
     vtkfile = df.File(str(xdmf_path.joinpath("vtk/bi_ventricular.pvd")))
-    new_meshfunc = df.MeshFunction("size_t", new_mesh, 3)
-    new_meshfunc.set_all(0)
+    vtk_meshfunc = df.MeshFunction("size_t", mesh_post, 3)
+    vtk_meshfunc.set_all(0)
 
-    vtkfile << new_mesh
-    vtkfile << tagged_facet_func
-    vtkfile << new_meshfunc
+    vtkfile << mesh_post
+    vtkfile << facet_func_post
+    vtkfile << vtk_meshfunc
 
     print("wrote domain in path {}".format(biv_path))
-    print("number of points: {}".format(new_mesh.num_vertices()))
+    print("number of points: {}".format(mesh_post.num_vertices()))
 
     print("saving files to visualize fibers")
     names = ["fiber", "sheet", "sheet_normal"]
-    directions = [fiber, sheet, sheet_normal]
-    # for name, direction in zip(names, directions):
-    #     xdmf_to_paraview = xdmf_path.joinpath(
-    #             f"bi_ventricular_{name}_visualization")
-    #     ldrb.fiber_to_xdmf(direction, str(xdmf_to_paraview))
+    directions = [system.fiber, system.sheet, system.sheet_normal]
 
     hdf5_path = Path(path)
     for name, direction in zip(names, directions):
         hdf5_file = hdf5_path.joinpath(f"fibers/bi_ventricular_{name}.h5")
 
-        with df.HDF5File(new_mesh.mpi_comm(), str(hdf5_file), "w") as hdf5:
+        with df.HDF5File(mesh_prev.mpi_comm(), str(hdf5_file), "w") as hdf5:
             hdf5.write(direction, "/" + name)
 
         vtk_fiber = df.File(
@@ -522,7 +529,7 @@ def tag_domain_with_markers_prev_fibers(
                 x[1] - center_lv.y()
             ) ** 2 / b_endo_lv**2 + (
                 x[2] - center_lv.z()
-            ) ** 2 / c_endo_lv**2 - 1 < df.DOLFIN_EPS and on_boundary
+            ) ** 2 / c_endo_lv**2 - 1 < 0.01 + df.DOLFIN_EPS and on_boundary
 
     class Base(df.SubDomain):
         def inside(self, x, on_boundary) -> None:
@@ -535,11 +542,11 @@ def tag_domain_with_markers_prev_fibers(
                 + (x[1] - center_rv.y()) ** 2 / b_endo_rv**2
                 + (x[2] - center_rv.z()) ** 2 / c_endo_rv**2
                 - 1
-                < df.DOLFIN_EPS
+                < 0.05 + df.DOLFIN_EPS
                 and (x[0] - center_lv.x()) ** 2 / a_epi_lv**2
                 + (x[1] - center_lv.y()) ** 2 / b_epi_lv**2
                 + (x[2] - center_lv.z()) ** 2 / c_epi_lv**2
-                - 0.98
+                - 0.99
                 > df.DOLFIN_EPS
             ) and on_boundary
 
@@ -566,8 +573,8 @@ def tag_domain_with_markers_prev_fibers(
                     (x[0] - center_lv.x()) ** 2 / a_epi_lv**2
                     + (x[1] - center_lv.y()) ** 2 / b_epi_lv**2
                     + (x[2] - center_lv.z()) ** 2 / c_epi_lv**2,
-                    0.98,
-                    0.02,
+                    1,
+                    0.01,
                 )
                 and on_boundary
             )
@@ -583,7 +590,7 @@ def tag_domain_with_markers_prev_fibers(
     base = Base()
     base.mark(ffun, markers["base"])
     endorv = EndoRV()
-    endorv.mark(ffun, markers["lv"])
+    endorv.mark(ffun, markers["rv"])
     epi = Epi()
     epi.mark(ffun, markers["epi"])
     epi_endo_rv = EpiEndoRV()
@@ -622,7 +629,7 @@ def tag_domain_with_markers_post_fibers(
                 x[1] - center_lv.y()
             ) ** 2 / b_endo_lv**2 + (
                 x[2] - center_lv.z()
-            ) ** 2 / c_endo_lv**2 - 1 < df.DOLFIN_EPS and on_boundary
+            ) ** 2 / c_endo_lv**2 - 1 < 0.01 + df.DOLFIN_EPS and on_boundary
 
     class Base(df.SubDomain):
         def inside(self, x, on_boundary) -> None:
@@ -635,11 +642,11 @@ def tag_domain_with_markers_post_fibers(
                 + (x[1] - center_rv.y()) ** 2 / b_endo_rv**2
                 + (x[2] - center_rv.z()) ** 2 / c_endo_rv**2
                 - 1
-                < df.DOLFIN_EPS
+                < 0.05 + df.DOLFIN_EPS
                 and (x[0] - center_lv.x()) ** 2 / a_epi_lv**2
                 + (x[1] - center_lv.y()) ** 2 / b_epi_lv**2
                 + (x[2] - center_lv.z()) ** 2 / c_epi_lv**2
-                - 0.98
+                - 0.99
                 > df.DOLFIN_EPS
             ) and on_boundary
 
@@ -750,11 +757,11 @@ def get_parser():
     )
     parser.add_argument(
         "--biventricular_with_fibers",
-        metavar="N",
-        type=int,
+        metavar="char_length",
+        type=float,
         default=-1,
         help="Bi-ventricular mesh (default) with discretization "
-        "size N  and defaul fiber configuration",
+        "characteristic length char_length and defaul fiber configuration",
     )
     parser.add_argument(
         "--biventricular_fibers_from_mesh",
