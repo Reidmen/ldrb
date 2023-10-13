@@ -377,6 +377,7 @@ def bi_ventricular_mesh_with_fibers(char_length: float, path="./meshes/"):
     import ldrb
 
     geometry = cardiac_geometries.create_biv_ellipsoid(
+        outdir=Path(path),
         char_length=char_length,
         a_endo_lv=0.069,  # 6.9cm
         b_endo_lv=0.025,  # 2.5cm
@@ -384,7 +385,7 @@ def bi_ventricular_mesh_with_fibers(char_length: float, path="./meshes/"):
         a_epi_lv=0.08,  # 8.0cm
         b_epi_lv=0.039,  # 3.9cm
         c_epi_lv=0.039,  # 3.9cm
-        center_lv_y=0.0,  # remaining coordinates are 0.0
+        center_lv_y=0.0,  # coordinates are 0.0
         a_endo_rv=0.070,  # 6.7cm
         b_endo_rv=0.033,  # 3.0cm
         c_endo_rv=0.054,  # 5.1cm
@@ -392,7 +393,7 @@ def bi_ventricular_mesh_with_fibers(char_length: float, path="./meshes/"):
         b_epi_rv=0.038,  # 3.8cm
         c_epi_rv=0.059,  # 5.9cm
         center_rv_y=0.0,  # coordinate x is 0.0
-        center_rv_z=0.019,
+        center_rv_z=0.02,
     )
 
     mesh_prev, facet_func_prev = tag_domain_with_markers_prev_fibers(
@@ -410,17 +411,17 @@ def bi_ventricular_mesh_with_fibers(char_length: float, path="./meshes/"):
         a_epi_rv=0.075,  # 7.5cm
         b_epi_rv=0.038,  # 3.8cm
         c_epi_rv=0.059,  # 5.9cm
-        center_rv=(0.0, 0.0, 0.019),
+        center_rv=(0.0, 0.0, 0.02),
         base_x=0.0,
     )
 
-    # xdmf_path = Path(path)
-    # xdmf_path.mkdir(exist_ok=True, parents=True)
+    xdmf_path = Path(path)
+    xdmf_path.mkdir(exist_ok=True, parents=True)
 
-    # biv_path = xdmf_path.joinpath("bi_ventricular.xdmf")
-    # with df.XDMFFile(mesh_prev.mpi_comm(), str(biv_path)) as xdmf:
-    #     xdmf.write(mesh_prev)
-    #     xdmf.write(facet_func_prev)
+    biv_path_prev = xdmf_path.joinpath("bi_ventricular_prev_tag.xdmf")
+    with df.XDMFFile(mesh_prev.mpi_comm(), str(biv_path_prev)) as xdmf_prev:
+        xdmf_prev.write(mesh_prev)
+        xdmf_prev.write(facet_func_prev)
 
     # Compute the microstructure
     print("Creating fiber, sheet and sheet_normal")
@@ -452,12 +453,12 @@ def bi_ventricular_mesh_with_fibers(char_length: float, path="./meshes/"):
         a_epi_rv=0.075,  # 7.5cm
         b_epi_rv=0.038,  # 3.8cm
         c_epi_rv=0.059,  # 5.9cm
-        center_rv=(0.0, 0.0, 0.019),
+        center_rv=(0.0, 0.0, 0.02),
         base_x=0.0,
     )
 
-    xdmf_path = Path(path)
-    xdmf_path.mkdir(exist_ok=True, parents=True)
+    # xdmf_path = Path(path)
+    # xdmf_path.mkdir(exist_ok=True, parents=True)
 
     biv_path = xdmf_path.joinpath("bi_ventricular.xdmf")
 
