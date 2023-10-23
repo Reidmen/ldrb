@@ -366,6 +366,73 @@ def bi_ventricular_fibers_from_mesh(path_to_folder: Path | str):
         print(f"wrote {name} in path {str(hdf5_file)}")
 
 
+def bi_ventricular_lumen(char_length: float, path="./meshes/"):
+    """Create bi-ventricular domain using the ldrb package
+    including fibers (fiber, sheet, sheet-normal) directions.
+
+    Args:
+        char_length (float):  characteristic length size
+        path (str):     write path
+    """
+    xdmf_path = Path(path)
+    xdmf_path.mkdir(exist_ok=True, parents=True)
+
+    geometry = cardiac_geometries.create_biv_ellipsoid_lumen(
+        outdir=Path(path),
+        char_length=char_length,
+        a_endo_lv=0.069,  # 6.9cm
+        b_endo_lv=0.025,  # 2.5cm
+        c_endo_lv=0.025,  # 2.5cm
+        a_epi_lv=0.08,  # 8.0cm
+        b_epi_lv=0.039,  # 3.9cm
+        c_epi_lv=0.039,  # 3.9cm
+        center_lv_y=0.0,  # coordinates are 0.0
+        a_endo_rv=0.070,  # 6.7cm
+        b_endo_rv=0.033,  # 3.0cm
+        c_endo_rv=0.054,  # 5.1cm
+        a_epi_rv=0.075,  # 7.5cm
+        b_epi_rv=0.038,  # 3.8cm
+        c_epi_rv=0.059,  # 5.9cm
+        center_rv_y=0.0,  # coordinate x is 0.0
+        center_rv_z=0.02,
+    )
+
+    mesh, facet_func = tag_domain_with_markers_post_fibers(
+        mesh=geometry.mesh,
+        a_endo_lv=0.069,  # 6.9cm
+        b_endo_lv=0.025,  # 2.5cm
+        c_endo_lv=0.025,  # 2.5cm
+        a_epi_lv=0.08,  # 8.0cm
+        b_epi_lv=0.039,  # 3.9cm
+        c_epi_lv=0.039,  # 3.9cm
+        center_lv=(0.0, 0.0, 0.0),
+        a_endo_rv=0.070,  # 6.7cm
+        b_endo_rv=0.033,  # 3.0cm
+        c_endo_rv=0.054,  # 5.1cm
+        a_epi_rv=0.075,  # 7.5cm
+        b_epi_rv=0.038,  # 3.8cm
+        c_epi_rv=0.059,  # 5.9cm
+        center_rv=(0.0, 0.0, 0.02),
+        base_x=0.0,
+    )
+
+    biv_path = xdmf_path.joinpath("biventricular_lumen.xdmf")
+    with df.XDMFFile(mesh.mpi_comm(), str(biv_path)) as xdmf:
+        xdmf.write(mesh)
+        xdmf.write(facet_func)
+
+    vtkfile = df.File(str(xdmf_path.joinpath("vtk/biventricular_lumen.pvd")))
+    vtk_meshfunc = df.MeshFunction("size_t", mesh, 3)
+    vtk_meshfunc.set_all(0)
+
+    vtkfile << mesh
+    vtkfile << facet_func
+    vtkfile << vtk_meshfunc
+
+    print("wrote domain in path {}".format(biv_path))
+    print("number of points: {}".format(mesh.num_vertices()))
+
+
 def bi_ventricular_mesh_with_fibers(char_length: float, path="./meshes/"):
     """Create bi-ventricular domain using the ldrb package
     including fibers (fiber, sheet, sheet-normal) directions.
@@ -396,7 +463,7 @@ def bi_ventricular_mesh_with_fibers(char_length: float, path="./meshes/"):
         center_rv_z=0.02,
     )
 
-    mesh_prev, facet_func_prev = tag_domain_with_markers_prev_fibers(
+    mesh_prev, facet_func_prev = tag_domain_with_markers_post_fibers(
         mesh=geometry.mesh,
         a_endo_lv=0.069,  # 6.9cm
         b_endo_lv=0.025,  # 2.5cm
@@ -675,12 +742,14 @@ def tag_domain_with_markers_post_fibers(
 
     endolv = EndoLV()
     endolv.mark(ffun, markers["lv"])
-    base = Base()
-    base.mark(ffun, markers["base"])
+    # base = Base()
+    # base.mark(ffun, markers["base"])
     endorv = EndoRV()
     endorv.mark(ffun, markers["rv"])
     epi = Epi()
     epi.mark(ffun, markers["epi"])
+    base = Base()
+    base.mark(ffun, markers["base"])
 
     mark_facets(mesh, ffun)
 
@@ -772,6 +841,15 @@ def get_parser():
         help="Creates fibers from a biventricular domain "
         "with path specified by the user",
     )
+    parser.add_argument(
+        "--biventricular_lumen",
+        metavar="path_to_folder",
+        type=float,
+        default=-1,
+        help="Creates a biventricular lumen domain "
+        "with path specified by the user",
+    )
+
     return parser
 
 
@@ -820,6 +898,8 @@ if __name__ == "__main__":
                 bi_ventricular_mesh_with_fibers(
                     args.biventricular_with_fibers, path=args.path
                 )
+            if args.biventricular_lumen > 0:
+                bi_ventricular_lumen(args.biventricular_lumen, path=args.path)
             if isinstance(args.biventricular_fibers_from_mesh, str):
                 bi_ventricular_fibers_from_mesh(
                     args.biventricular_fibers_from_mesh
