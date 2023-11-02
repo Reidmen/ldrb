@@ -3,10 +3,36 @@ import argparse
 from pathlib import Path
 from typing import Tuple
 import dolfin as df
+import h5py
 import sys
 
 import ldrb
 import cardiac_geometries
+import numpy as np
+
+
+def read_mesh(mesh_file: Path | str) -> Tuple[df.Mesh, df.MeshFunction]:
+    if isinstance(mesh_file, Path):
+        mesh_file = str(mesh_file)
+
+    tmp = mesh_file.split(".")
+    file_type = tmp[-1]
+
+    if file_type == "xdmf":
+        mesh = df.Mesh()
+
+        with df.XDMFFile(mesh_file) as xf:
+            xf.read(mesh)
+            boundaries = df.MeshFunction(
+                "size_t", mesh, mesh.topology().dim() - 1, 0
+            )
+
+            xf.read(boundaries)
+
+    else:
+        raise TypeError("only xdmf format available")
+
+    return mesh, boundaries
 
 
 def rectangle_mesh(L, H, nx, ny, path="./meshes/"):
@@ -270,6 +296,159 @@ def beam_mesh(L, H, W, ny, path="./meshes/"):
     print("number of points: {}".format(mesh.num_vertices()))
 
     return mesh, boundaries
+
+
+def init_xdmf(path_to_folder: Path, filename: str = "fiber_directions") -> df.XDMFFile:
+    """Initialize xdmf file using options dictionary"""
+    path_to_file = path_to_folder.joinpath(f"{filename}.xdmf")
+    xdmf_file = df.XDMFFile(str(path_to_file))
+    xdmf_file.parameters["flush_output"] = True
+    xdmf_file.parameters["functions_share_mesh"] = True
+
+    return xdmf_file
+
+
+def bi_ventricular_domain_from_mesh_and_fibers(
+    path_to_folder: Path | str,
+    element_space: str = "P1",
+    path: str = "./meshes/",
+) -> None:
+    """Process biventricular fibers in standard model"""
+    xdmf_path = Path(path_to_folder)
+    xdmf_path.mkdir(exist_ok=True, parents=True)
+
+    domain_path = xdmf_path.joinpath("bi_ventricular.xdmf")
+    fiber_path = xdmf_path.joinpath("fibers_biv_coarse.h5")
+    mesh, _ = read_mesh(domain_path)
+
+    V = df.VectorFunctionSpace(mesh, "CG", int(element_space[-1]))
+    fiber = df.Function(V, name="fiber")
+    sheet = df.Function(V, name="sheet")
+    sheet_normal = df.Function(V, name="sheet_normal")
+
+    names = ["fiber", "sheet", "sheet_normal"]
+    directions = [fiber, sheet, sheet_normal]
+
+    xdmf_file = init_xdmf(xdmf_path)
+
+    print("Loading fiber files in the standard format")
+
+    with h5py.File(fiber_path.as_posix(), "r") as hdf:
+        (
+            transfer_0,
+            transfer_1,
+            transfer_2,
+        ) = compute_transfer_matrix_lifex_to_dolfin(V, np.array(hdf["nodes"]))
+        for func, name in zip(directions, names):
+            dofs_0 = func.function_space().sub(0).dofmap().dofs()
+            dofs_1 = func.function_space().sub(1).dofmap().dofs()
+            dofs_2 = func.function_space().sub(2).dofmap().dofs()
+
+            fiber_data = np.array(hdf[name])
+
+            func.vector()[dofs_0] = fiber_data[:, 0][transfer_0]
+            func.vector()[dofs_1] = fiber_data[:, 1][transfer_1]
+            func.vector()[dofs_2] = fiber_data[:, 2][transfer_2]
+
+    print("Saving fiber files in the standard format")
+
+    for func, name in zip(directions, names):
+        hdf5_file = xdmf_path.joinpath(
+            f"fibers/h5_format/bi_ventricular_{name}.h5"
+        )
+
+        with df.HDF5File(mesh.mpi_comm(), hdf5_file.as_posix(), "w") as hdf:
+            hdf.write(func, "/" + name)
+
+        vtk_fiber = df.File(
+            xdmf_path.joinpath(
+                f"fibers/pvd_format/bi_ventricular_{name}.pvd"
+            ).as_posix()
+        )
+        vtk_fiber << func
+        print(f"Wrote {name} in path {hdf5_file.as_posix()} alongside VTK format")
+
+    # store second order fibers by interpolation
+    if int(element_space[-1]) == 1:
+        store_2nd_order_fibers_by_interpolation(
+            xdmf_path, fiber, sheet, sheet_normal
+        )
+
+    xdmf_file.write(fiber, 0.0)
+    xdmf_file.write(sheet, 0.0)
+    xdmf_file.write(sheet_normal, 0.0)
+    xdmf_file.close()
+
+
+def store_2nd_order_fibers_by_interpolation(
+    xdmf_path: Path,
+    fiber: df.Function,
+    sheet: df.Function,
+    sheet_normal: df.Function,
+    deg: int = 2
+) -> None:
+    """Stores 2nd order interpolation from 1st order fibers"""
+    print("Writing 2nd order fibers by interpolation")
+    mesh = fiber.function_space().mesh()
+    W = df.VectorFunctionSpace(mesh, "CG", deg)
+
+    fiber_2nd = df.Function(W, name="fiber")
+    sheet_2nd = df.Function(W, name="sheet")
+    sheet_normal_2nd = df.Function(W, name="sheet_normal")
+
+    directions = [fiber, sheet, sheet_normal]
+    directions_2nd = [fiber_2nd, sheet_2nd, sheet_normal_2nd]
+    names = ["fiber", "sheet", "sheet_normal"]
+
+    for func, func_2nd, name in zip(directions, directions_2nd, names):
+        func_2nd.interpolate(func)
+
+        domain_path = xdmf_path.joinpath(f"higher_order/fibers/h5_format/bi_ventricular_{name}.h5")
+        with df.HDF5File(mesh.mpi_comm(), domain_path.as_posix(), "w") as hdf:
+            hdf.write(func_2nd, "/" + name)
+
+
+def get_coordinates_subspaces(
+    V: df.FunctionSpace,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    total_dofs_coordinates = V.tabulate_dof_coordinates()
+    dofs_0 = V.sub(0).dofmap().dofs()
+    dofs_1 = V.sub(1).dofmap().dofs()
+    dofs_2 = V.sub(2).dofmap().dofs()
+
+    coords_sub_0 = total_dofs_coordinates[dofs_0, :]
+    coords_sub_1 = total_dofs_coordinates[dofs_1, :]
+    coords_sub_2 = total_dofs_coordinates[dofs_2, :]
+
+    return coords_sub_0, coords_sub_1, coords_sub_2
+
+
+def compute_transfer_matrix_lifex_to_dolfin(
+    V: df.FunctionSpace, nodes: np.ndarray
+) -> tuple[list[int], list[int], list[int]]:
+    # number_of_nodes = nodes.shape[0]
+    coords_0, coords_1, coords_2 = get_coordinates_subspaces(V)
+    transfer_idx_0, transfer_idx_1, transfer_idx_2 = [], [], []
+    # for i in range(number_of_nodes):
+    #     node = nodes[i]
+    #     for coords, transfer_idx in zip(
+    #         [coords_0, coords_1, coords_2],
+    #         [transfer_idx_0, transfer_idx_1, transfer_idx_2],
+    #     ):
+    #         distance_vector = np.sqrt(np.sum((node - coords) ** 2, axis=1))
+    #         min_index = np.argmin(distance_vector)
+    #         transfer_idx.append(min_index)
+
+    for coords, transfer_idx in zip(
+        [coords_0, coords_1, coords_2],
+        [transfer_idx_0, transfer_idx_1, transfer_idx_2],
+    ):
+        for point in coords:
+            distance_vector = np.sqrt(np.sum((point - nodes) ** 2, axis=1))
+            min_index = np.argmin(distance_vector)
+            transfer_idx.append(min_index)
+
+    return transfer_idx_0, transfer_idx_1, transfer_idx_2
 
 
 def bi_ventricular_fibers_from_mesh(path_to_folder: Path | str):
@@ -849,6 +1028,13 @@ def get_parser():
         help="Creates a biventricular lumen domain "
         "with path specified by the user",
     )
+    parser.add_argument(
+        "--biventricular_from_mesh_and_fibers",
+        metavar="path_to_folder",
+        type=str,
+        default=0,
+        help="Creates a biventricular fibers from user-defined source",
+    )
 
     return parser
 
@@ -900,6 +1086,12 @@ if __name__ == "__main__":
                 )
             if args.biventricular_lumen > 0:
                 bi_ventricular_lumen(args.biventricular_lumen, path=args.path)
+
+            if isinstance(args.biventricular_from_mesh_and_fibers, str):
+                bi_ventricular_domain_from_mesh_and_fibers(
+                    args.biventricular_from_mesh_and_fibers, path=args.path
+                )
+
             if isinstance(args.biventricular_fibers_from_mesh, str):
                 bi_ventricular_fibers_from_mesh(
                     args.biventricular_fibers_from_mesh
